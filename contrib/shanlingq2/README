@@ -1,0 +1,63 @@
+Shanling Q2 tools
+=================
+
+The Q2 runs Linux 5.10 on an Ingenic X2000 (MIPS32r2, nan2008) with glibc 2.28, no IPv6 and no CA
+bundle. q2-qobuz runs from the card's .qobuz folder as a Q2 Pod card app (q2-pod's patch/addon.c):
+Q2 Pod lists it in Streaming, starts it from that row, draws its page and keeps the Q2 awake while it
+downloads. Nothing is flashed for it.
+
+  build.sh     static Go for the Q2 and the card files, in target/shanlingq2/.qobuz, zipped as
+               target/shanlingq2/q2-qobuz-vX.Y-SHA.zip
+  package.py   checks the binary (static, MIPS32 little-endian, soft-float ABI), sets the nan2008
+               ELF flag the Q2's kernel requires and Go doesn't, and writes the ZIP
+  launcher.sh  installed as .qobuz/run: q2-qobuz copied to /tmp and run there at nice 10 in a
+               restart loop
+  q2app        name=Qobuz, search=Search Qobuz, qr=0 (the QR code opens from a row)
+  icon.png, icon-40.png
+               Streaming's row icon, 52 px and 40 px: a Q in white on near-black
+  test_launcher.py
+               runs launcher.sh on the host with a fake app
+
+Device
+------
+
+Q2 Pod runs /bin/sh /mnt/mmc/.qobuz/run when Streaming's Qobuz row is pressed and it isn't running;
+the launcher copies q2-qobuz and itself to /tmp, restarts it after a failure (5 s, doubling to a
+minute) and leaves the loop's pid in /tmp/q2-qobuz. An exit of 0 (turned off, or idle 15 minutes with
+nothing to download) ends it; a TERM stops it, keeping a download under way to resume.
+
+  /tmp/q2-qobuz.state        addr, pin, qr, qrsize, note, hold, version (as q2-podcasts')
+  /tmp/q2-qobuz.sock         datagrams: q quits
+  /tmp/q2-qobuz.browse.sock  Q2SPOT/1 for the Q2's page (cmd/q2-qobuz/device.go lists the levels)
+  port 8300                  the phone page (the next free one if taken)
+  /mnt/data/q2-qobuz/        the sign-in, in the Q2's own storage (-private)
+
+Qobuz
+-----
+
+The API is the web player's, www.qobuz.com/api.json/0.2, with X-App-Id and X-User-Auth-Token. The app
+id, the sign-in key and the per-region secrets are read from the web player's script
+(play.qobuz.com/login names it), kept in .qobuz/creds.json and read again once a run and when a
+request is refused, the script only when it has changed (internal/qobuz/creds.go). The secret that
+signs this account's file requests is found by trying each on the newest liked song Qobuz streams
+(an answer without a file still takes the signature), and kept with the sign-in.
+
+Sign-in: the phone page sends the phone to www.qobuz.com/signin/oauth with this app id and a return
+address on the Q2, /signin/<nonce> (one use, 15 minutes: Qobuz's redirect brings no cookie). Qobuz
+returns with code_autorisation, which oauth/callback trades, with the script's private key, for the
+account's token. A 401 later forgets the token and asks for a new sign-in; the lists and downloads
+stay.
+
+Files: track/getFileUrl (format_id 6, 7 or 27, intent stream, request_ts, request_sig the MD5 of
+"trackgetFileUrl", the arguments in name order, the time and the secret) gives a short-lived
+address of a plain FLAC, at the best format the track has up to the one asked. Its files carry no
+tags: the downloader reads its metadata blocks, writes a new start (STREAMINFO and SEEKTABLE kept,
+Vorbis comments from the catalogue, the album's 600 px cover, 4 KB of padding), then the frames as
+they come. partial/<id>.json keeps where the two starts end, so a break resumes with a Range (a .part
+already whole starts again). A track Qobuz answers without a file fails at once. A track another
+folder has is copied, not downloaded. After each download the cache is trimmed, oldest first, to
+Download Space.
+
+Library: favorite/getUserFavorites (albums, tracks, artists) and playlist/getUserPlaylists, read 500
+at a time to their totals, kept in .qobuz/lists and read again after 30 minutes; album/get,
+playlist/get (extra=tracks, paged), artist/get (extra=albums) and catalog/search when opened.

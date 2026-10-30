@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Qobuz on the Q2</title>
+<style>
+:root { --bg:#f4f4f6; --card:#fff; --ink:#18181b; --muted:#6b6b76; --line:#e3e3e8; --accent:#0a7cff; --accent-ink:#fff; --bad:#c0392b; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0f0f12; --card:#1b1b20; --ink:#ececf1; --muted:#9a9aa6; --line:#2c2c33; --accent:#4c9dff; --accent-ink:#06121f; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width:560px; margin:0 auto; padding:16px 16px 48px; }
+h1 { font-size:26px; margin:8px 0 16px; }
+h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:24px 4px 8px; font-weight:600; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.row { display:flex; align-items:center; gap:12px; padding:12px 14px; border-top:1px solid var(--line); }
+.row:first-child { border-top:0; }
+.grow { flex:1; min-width:0; }
+.title { font-weight:600; overflow-wrap:anywhere; }
+.sub { color:var(--muted); font-size:14px; overflow-wrap:anywhere; }
+button { font:inherit; font-weight:600; font-size:15px; border:0; border-radius:999px; padding:10px 18px; background:var(--accent); color:var(--accent-ink); cursor:pointer; }
+button.quiet { background:transparent; color:var(--accent); border:1px solid var(--line); }
+button.bad { background:transparent; color:var(--bad); border:1px solid var(--line); }
+button:disabled { opacity:.5; }
+select, input { font:inherit; padding:8px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); }
+.big { width:100%; padding:14px; font-size:17px; }
+.bar { height:4px; background:var(--line); border-radius:2px; margin-top:6px; overflow:hidden; }
+.bar > i { display:block; height:100%; background:var(--accent); }
+.muted { color:var(--muted); font-size:14px; }
+.hidden { display:none !important; }
+#login form { display:flex; gap:8px; margin-top:12px; }
+#login input { flex:1; }
+.toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:999px; font-size:14px; opacity:0; transition:opacity .2s; pointer-events:none; }
+.toast.on { opacity:1; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Qobuz on the Q2</h1>
+  <section id="login" class="hidden">
+    <p class="muted">Type the PIN on the Q2's screen (Streaming → Qobuz).</p>
+    <form id="loginForm"><input id="pin" inputmode="numeric" autocomplete="one-time-code" placeholder="PIN"><button>Continue</button></form>
+  </section>
+  <section id="out" class="hidden">
+    <p>Sign in with your Qobuz account. Qobuz's own page opens; your password goes only to Qobuz, and you come back here when it's done.</p>
+    <button class="big" id="signin">Sign In with Qobuz</button>
+    <p class="muted">A paid Qobuz plan is needed to stream. Hi-Res needs Studio or Sublime, or any current Solo, Duo or Family plan.</p>
+  </section>
+  <section id="in" class="hidden">
+    <div class="card"><div class="row"><div class="grow"><div class="title" id="who"></div><div class="sub" id="plan"></div></div>
+      <button class="bad" id="signout">Sign out</button></div></div>
+    <h2>Quality and space</h2>
+    <div class="card">
+      <div class="row"><div class="grow"><div class="title">Streaming quality</div><div class="sub">Smaller starts sooner</div></div>
+        <select id="streamQuality"><option value="5">MP3 (320 kbps)</option><option value="6">CD (16-bit 44.1 kHz)</option><option value="7">Up to 24-bit 96 kHz</option><option value="27">Up to 24-bit 192 kHz</option></select></div>
+      <div class="row"><div class="grow"><div class="title">Download quality</div><div class="sub">From the next download</div></div>
+        <select id="quality"><option value="5">MP3 (320 kbps)</option><option value="6">CD (16-bit 44.1 kHz)</option><option value="7">Up to 24-bit 96 kHz</option><option value="27">Up to 24-bit 192 kHz</option></select></div>
+      <div class="row"><div class="grow"><div class="title">Space</div><div class="sub" id="used"></div></div>
+        <select id="limit"><option value="1024">1 GB</option><option value="2048">2 GB</option><option value="4096">4 GB</option><option value="8192">8 GB</option><option value="16384">16 GB</option><option value="32768">32 GB</option></select></div>
+    </div>
+    <h2>Downloading</h2>
+    <div class="card" id="jobs"></div>
+    <p class="muted">Browse and pick music on the Q2: Streaming → Qobuz.</p>
+  </section>
+  <p class="muted" id="version"></p>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let timer = 0;
+function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("on"); clearTimeout(timer); timer = setTimeout(() => t.classList.remove("on"), 2600); }
+async function api(path, body) {
+  const r = await fetch("/api/" + path, body === undefined ? {} : {method: "POST", headers: {"X-Q2": "1"}, body: JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { show("login"); throw new Error("Type the PIN first"); }
+  if (!r.ok) throw new Error(d.error || "Something went wrong (" + r.status + ")");
+  return d;
+}
+function show(id) { for (const s of ["login", "out", "in"]) $(s).classList.toggle("hidden", s !== id); }
+function size(b) { if (!b || b <= 0) return ""; if (b < 1 << 30) return Math.round(b / (1 << 20)) + " MB"; return (b / (1 << 30)).toFixed(1) + " GB"; }
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+function render(s) {
+  $("version").textContent = "Q2 Qobuz " + s.version.replace("q2-", "");
+  if (!s.signedIn) { show("out"); return; }
+  show("in");
+  $("who").textContent = s.name || "Signed in";
+  $("plan").textContent = [s.plan, s.hires ? "Hi-Res" : "", s.since ? "since " + new Date(s.since).toLocaleDateString() : ""].filter(Boolean).join(" · ");
+  if (document.activeElement !== $("quality")) $("quality").value = String(s.quality);
+  if (document.activeElement !== $("streamQuality")) $("streamQuality").value = String(s.streamQuality);
+  if (document.activeElement !== $("limit")) $("limit").value = String(s.limitMB);
+  $("used").textContent = s.files + " tracks, " + (size(s.used) || "nothing") + " used";
+  const jobs = $("jobs");
+  jobs.replaceChildren();
+  if (!s.jobs.length) jobs.append(el("div", "row muted", "Nothing downloading"));
+  for (const j of s.jobs) {
+    const row = el("div", "row"), g = el("div", "grow");
+    g.append(el("div", "title", j.title));
+    const line = j.state === "active" ? "Downloading" + (j.size > 0 ? " " + Math.floor(j.done * 100 / j.size) + "% of " + size(j.size) : "")
+      : j.state === "failed" ? "Couldn't download: " + j.error : (j.error ? "Trying again soon: " + j.error : "Waiting");
+    g.append(el("div", "sub", [j.artist, line].filter(Boolean).join(" · ")));
+    if (j.state === "active" && j.size > 0) { const b = el("div", "bar"), i = el("i"); i.style.width = Math.max(2, j.done * 100 / j.size) + "%"; b.append(i); g.append(b); }
+    const btn = el("button", "quiet", j.state === "failed" ? "Retry" : "Cancel");
+    btn.onclick = () => (j.state === "failed" ? api("retry", {}) : api("cancel", {ctx: j.ctx, id: j.id})).then(refresh, e => toast(e.message));
+    row.append(g, btn);
+    jobs.append(row);
+  }
+}
+let busy = false;
+async function refresh() { if (busy) return; busy = true; try { render(await api("state")); } catch (e) {} finally { busy = false; } }
+$("loginForm").onsubmit = async e => { e.preventDefault(); try { await api("login", {PIN: $("pin").value}); refresh(); } catch (err) { toast(err.message); } };
+$("signin").onclick = async () => { $("signin").disabled = true; try { location.href = (await api("signin", {})).url; } catch (e) { toast(e.message); $("signin").disabled = false; } };
+$("signout").onclick = async () => { if (!confirm("Sign out of Qobuz on the Q2? Downloads stay on it.")) return; try { await api("signout", {}); refresh(); } catch (e) { toast(e.message); } };
+$("quality").onchange = e => api("settings", {quality: +e.target.value}).then(() => toast("Saved"), err => toast(err.message));
+$("streamQuality").onchange = e => api("settings", {stream_quality: +e.target.value}).then(() => toast("Saved"), err => toast(err.message));
+$("limit").onchange = e => api("settings", {limit_mb: +e.target.value}).then(() => toast("Saved"), err => toast(err.message));
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 2500);
+</script>
+</body>
+</html>
